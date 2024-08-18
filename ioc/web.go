@@ -9,10 +9,11 @@ import (
 )
 
 func InitWebServer(mdls []gin.HandlerFunc,
-	userHdl *web.UserHandler) *gin.Engine {
+	userHdl *web.UserHandler, fileHdl *web.FileHandler) *gin.Engine {
 	server := gin.Default()
 	server.Use(mdls...)
 	userHdl.RegisterRoutes(server)
+	fileHdl.RegisterRoutes(server)
 	return server
 }
 
