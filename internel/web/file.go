@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/lvow2022/udisk/internel/domain"
+	"github.com/lvow2022/udisk/internel/pkg/code"
 	"github.com/lvow2022/udisk/internel/service"
+	"github.com/lvow2022/udisk/pkg/ginx"
+	"github.com/lvow2022/udisk/pkg/ginx/errors"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -29,13 +32,14 @@ func (h *FileHandler) RegisterRoutes(server *gin.Engine) {
 	g.POST("/adduser", h.AddUser)
 }
 
-func (h *FileHandler) ValidateUpload(ctx *gin.Context) {
-	type request struct {
-		domain.FileMetadata
-	}
+type ValidateUploadRequest struct {
+	domain.FileMetadata
+}
 
-	var req request
+func (h *FileHandler) ValidateUpload(ctx *gin.Context) {
+	var req ValidateUploadRequest
 	if err := ctx.Bind(&req); err != nil {
+		ginx.WriteResponse(ctx, errors.WithCode(code.ErrBind, err.Error()), nil)
 		return
 	}
 
@@ -49,11 +53,7 @@ func (h *FileHandler) ValidateUpload(ctx *gin.Context) {
 	}
 	taskId, err := h.fileSvc.ValidateUpload(ctx, "123", metadata)
 	if err != nil {
-		ctx.JSON(http.StatusOK, Result{
-			Code: 4,
-			Msg:  err.Error(),
-		})
-		return
+		ginx.WriteResponse(ctx, err, nil)
 	}
 
 	type TaskDetails struct {
@@ -62,15 +62,11 @@ func (h *FileHandler) ValidateUpload(ctx *gin.Context) {
 		//Status   string `json:"status"`
 	}
 
-	ctx.JSON(http.StatusOK, Result{
-		Code: http.StatusOK,
-		Msg:  "Success",
-		Data: TaskDetails{
-			TaskID: taskId,
-		},
-	})
-
+	ginx.WriteResponse(ctx, nil, TaskDetails{taskId})
 	return
+}
+
+type ValidateDownloadRequest struct {
 }
 
 func (h *FileHandler) ValidateDownload(ctx *gin.Context) {
@@ -93,10 +89,7 @@ func (h *FileHandler) ValidateDownload(ctx *gin.Context) {
 	}
 	taskId, err := h.fileSvc.ValidateDownload(ctx, "123", metadata)
 	if err != nil {
-		ctx.JSON(http.StatusOK, Result{
-			Code: 4,
-			Msg:  err.Error(),
-		})
+		ginx.WriteResponse(ctx, err, nil)
 		return
 	}
 
@@ -106,13 +99,7 @@ func (h *FileHandler) ValidateDownload(ctx *gin.Context) {
 		//Status   string `json:"status"`
 	}
 
-	ctx.JSON(http.StatusOK, Result{
-		Code: http.StatusOK,
-		Msg:  "Success",
-		Data: TaskDetails{
-			TaskID: taskId,
-		},
-	})
+	ginx.WriteResponse(ctx, nil, TaskDetails{taskId})
 
 	return
 }
@@ -143,10 +130,7 @@ func (h *FileHandler) Upload(ctx *gin.Context) {
 	userId := ctx.PostForm("user_id")
 	taskId := ctx.PostForm("task_id")
 	err = h.fileSvc.Upload(ctx, userId, taskId, content)
-	ctx.JSON(http.StatusOK, Result{
-		Code: http.StatusOK,
-		Msg:  "Success",
-	})
+	ginx.WriteResponse(ctx, err, nil)
 	return
 }
 
@@ -193,17 +177,11 @@ func (h *FileHandler) AddUser(ctx *gin.Context) {
 
 	err := h.fileSvc.AddUser(ctx, req.UserId)
 	if err != nil {
-		ctx.JSON(http.StatusOK, Result{
-			Code: 4,
-			Msg:  err.Error(),
-		})
+		ginx.WriteResponse(ctx, err, nil)
 		return
 	}
 
-	ctx.JSON(http.StatusOK, Result{
-		Code: http.StatusOK,
-		Msg:  "Success",
-	})
+	ginx.WriteResponse(ctx, nil, nil)
 
 	return
 }
