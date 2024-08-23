@@ -25,7 +25,7 @@ func InitWebServer() *gin.Engine {
 		repository.NewUserRepository,
 		repository.NewFileRepository,
 
-		file.NewTaskSchedule,
+		file.NewTransferManager,
 		// service
 		service.NewUserService,
 		service.NewFileService,

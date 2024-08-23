@@ -8,7 +8,6 @@ import (
 	"github.com/lvow2022/udisk/internel/service"
 	"github.com/lvow2022/udisk/pkg/ginx"
 	"github.com/lvow2022/udisk/pkg/ginx/errors"
-	"io/ioutil"
 	"net/http"
 	"os"
 )
@@ -28,7 +27,7 @@ func (h *FileHandler) RegisterRoutes(server *gin.Engine) {
 	g.POST("/validate/upload", h.ValidateUpload)
 	g.POST("/validate/download", h.ValidateDownload)
 	g.POST("/upload", h.Upload)
-	g.POST("/download", h.Download)
+	g.GET("/download", h.Download)
 	g.POST("/adduser", h.AddUser)
 }
 
@@ -106,45 +105,31 @@ func (h *FileHandler) ValidateDownload(ctx *gin.Context) {
 
 func (h *FileHandler) Upload(ctx *gin.Context) {
 	file, err := ctx.FormFile("file")
-	if err != nil {
-		ctx.String(http.StatusBadRequest, fmt.Sprintf("Failed to get file: %s", err.Error()))
-		return
-	}
-
-	// 打开上传的文件
-	openedFile, err := file.Open()
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, fmt.Sprintf("Failed to open file: %s", err.Error()))
-		return
-	}
-	defer openedFile.Close()
-
-	// 读取文件内容
-	content, err := ioutil.ReadAll(openedFile)
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, fmt.Sprintf("Failed to read file content: %s", err.Error()))
-		return
-	}
-	// 打印文件内容，或者处理文件内容
-	fmt.Println("File content:", string(content))
-	userId := ctx.PostForm("user_id")
 	taskId := ctx.PostForm("task_id")
-	err = h.fileSvc.Upload(ctx, userId, taskId, content)
+	if err != nil || taskId == "" {
+		ctx.String(http.StatusBadRequest, fmt.Sprintf("获取上传文件失败: %s", err.Error()))
+		return
+	}
+
+	filePath, err := h.fileSvc.Upload(ctx, taskId)
+	if err != nil {
+		ctx.String(http.StatusOK, fmt.Sprintf("获取上传文件失败: %s", err.Error()))
+		return
+	}
+	if err = ctx.SaveUploadedFile(file, filePath); err != nil {
+		ctx.String(http.StatusInternalServerError, "保存文件失败: %s", err.Error())
+	}
 	ginx.WriteResponse(ctx, err, nil)
 	return
 }
 
 func (h *FileHandler) Download(ctx *gin.Context) {
-	type request struct {
-		UserId string `json:"user_id"`
-		TaskId string `json:"task_id"`
-	}
-	var req request
-	if err := ctx.Bind(&req); err != nil {
+	taskId := ctx.Query("task_id")
+	if taskId == "" {
+		ctx.String(http.StatusBadRequest, "缺少 query param")
 		return
 	}
-
-	fileName, filePath, err := h.fileSvc.Download(ctx, req.UserId, req.TaskId)
+	filePath, fileName, err := h.fileSvc.Download(ctx, taskId)
 	// 打开文件
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -154,7 +139,7 @@ func (h *FileHandler) Download(ctx *gin.Context) {
 	defer file.Close()
 
 	// Content-Disposition 决定了下载行为和文件名，而 Content-Type 确保文件内容作为二进制文件处理，不被浏览器尝试解析。
-	ctx.Header("Content-Disposition", "attachment; filename="+fileName)
+	ctx.Header("Content-Disposition", "attachment; filename=example.txt")
 	ctx.Header("Content-Type", "application/octet-stream")
 	// 获取文件的修改时间
 	fileInfo, err := file.Stat()

@@ -25,9 +25,9 @@ func InitWebServer() *gin.Engine {
 	userRepository := repository.NewUserRepository(userDAO)
 	userService := service.NewUserService(userRepository)
 	userHandler := web.NewUserHandler(userService)
-	taskSchedule := file.NewTaskSchedule()
+	transferManager := file.NewTransferManager()
 	fileRepository := repository.NewFileRepository()
-	fileService := service.NewFileService(taskSchedule, fileRepository)
+	fileService := service.NewFileService(transferManager, fileRepository)
 	fileHandler := web.NewFileHandler(fileService)
 	engine := ioc.InitWebServer(v, userHandler, fileHandler)
 	return engine
