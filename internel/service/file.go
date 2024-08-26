@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/lvow2022/udisk/internel/domain"
 	"github.com/lvow2022/udisk/internel/repository"
@@ -19,8 +18,8 @@ type FileService interface {
 	ListDirectory(ctx context.Context, userId string, path string) ([]os.FileInfo, error)
 	MakeDirectory(ctx context.Context, path string) error
 	FileStat(ctx context.Context, path string) (os.FileInfo, error)
-	ValidateUpload(ctx context.Context, userId string, metadata domain.FileMetadata) (string, error)
-	ValidateDownload(ctx context.Context, userId string, metadata domain.FileMetadata) (string, error)
+	ValidateUpload(ctx context.Context, userId string, metadata domain.FileMetadata) (details *file.TaskDetails, err error)
+	ValidateDownload(ctx context.Context, userId string, metadata domain.FileMetadata) (details *file.TaskDetails, err error)
 	AddUser(ctx context.Context, userId string) error
 }
 
@@ -50,46 +49,45 @@ func (f *fileService) AddUser(ctx context.Context, userId string) error {
 	return nil
 }
 
-func (f *fileService) ValidateUpload(ctx context.Context, userId string, metadata domain.FileMetadata) (string, error) {
+func (f *fileService) ValidateUpload(ctx context.Context, userId string, metadata domain.FileMetadata) (details *file.TaskDetails, err error) {
 	// 这里可以加入元数据验证逻辑
 	// 验证是否存在同名文件
 	memFs, err := f.getMemFs(userId)
 	if err != nil {
-		return "", err
+		return
 	}
 	info, err := memFs.Stat(metadata.Path)
 	if info != nil {
-		return "", errors.New("file exists")
+		return
 	}
 
-	taskId, err := f.tm.GenUploadTask(f.osFs, memFs, metadata)
+	details, err = f.tm.GenUploadTask(f.osFs, memFs, metadata)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate task: %v", err)
+		return
 	}
 
-	// 返回生成的任务 ID
-	return taskId, nil
+	return
 }
 
-func (f *fileService) ValidateDownload(ctx context.Context, userId string, metadata domain.FileMetadata) (string, error) {
+func (f *fileService) ValidateDownload(ctx context.Context, userId string, metadata domain.FileMetadata) (details *file.TaskDetails, err error) {
 	// 这里可以加入元数据验证逻辑
 	// 验证是否存在同名文件
 	memFs, err := f.getMemFs(userId)
 	if err != nil {
-		return "", err
+		return
 	}
 	_, err = memFs.Stat(metadata.Path)
 	if err != nil {
-		return "", errors.New("no such file ")
+		return
 	}
 
-	taskId, err := f.tm.GenDownloadTask(f.osFs, memFs, metadata)
+	details, err = f.tm.GenDownloadTask(f.osFs, memFs, metadata)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate task: %v", err)
+		return
 	}
 
 	// 返回生成的任务 ID
-	return taskId, nil
+	return
 }
 
 // Upload 上传文件并持久化到 OS 文件系统

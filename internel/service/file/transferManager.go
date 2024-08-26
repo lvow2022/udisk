@@ -7,6 +7,7 @@ import (
 
 const (
 	LargeFileMaxSize = 100 * 1024 * 1024 // 中等文件最大值为 500MB (500 * 1024 * 1024 字节)
+	FileChunkSize    = 20 * 1024 * 1024
 )
 
 // 文件大小类型
@@ -18,8 +19,8 @@ const (
 )
 
 type TransferManager interface {
-	GenUploadTask(osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (taskId string, err error)
-	GenDownloadTask(osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (taskId string, err error)
+	GenUploadTask(osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (taskDetails *TaskDetails, err error)
+	GenDownloadTask(osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (taskDetails *TaskDetails, err error)
 	Process(taskId string) (filePath string, fileName string, err error)
 }
 
@@ -27,7 +28,7 @@ type transferManager struct {
 	tc *TaskCenter
 }
 
-func (t *transferManager) GenDownloadTask(osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (taskId string, err error) {
+func (t *transferManager) GenDownloadTask(osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (taskDetails *TaskDetails, err error) {
 	// 根据文件大小生成对应 task
 	var taskType TaskType
 	if metadata.Size < LargeFileMaxSize {
@@ -39,7 +40,7 @@ func (t *transferManager) GenDownloadTask(osFs afero.Fs, memFs afero.Fs, metadat
 	return t.tc.Gen(taskType, osFs, memFs, metadata)
 }
 
-func (t *transferManager) GenUploadTask(osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (taskId string, err error) {
+func (t *transferManager) GenUploadTask(osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (taskDetails *TaskDetails, err error) {
 	// 根据文件大小生成对应 task
 	var taskType TaskType
 	if metadata.Size < LargeFileMaxSize {

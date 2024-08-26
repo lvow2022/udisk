@@ -29,13 +29,12 @@ const (
 )
 
 type Task struct {
-	ID       string
 	Status   TaskStatus
 	Metadata domain.FileMetadata
 	Error    error
-	Type     TaskType
-	osFs     afero.Fs
-	memFs    afero.Fs
+	//osFs    afero.Fs
+	memFs   afero.Fs
+	Details *TaskDetails
 }
 
 type TaskCenter struct {
@@ -44,24 +43,69 @@ type TaskCenter struct {
 
 func NewTaskCenter() *TaskCenter {
 	ts := &TaskCenter{}
-
 	return ts
 }
 
-func (t *TaskCenter) Gen(taskType TaskType, osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (string, error) {
-	taskID, _ := generateTaskID() // 生成唯一任务 ID
-	task := &Task{
-		ID:       taskID,
-		Status:   TaskPending,
-		Metadata: metadata,
-		Type:     taskType,
-		osFs:     osFs,
-		memFs:    memFs,
+type TaskDetails struct {
+	TaskId   string      `json:"task_id"`
+	Type     TaskType    `json:"type"`
+	ChunkNum int         `json:"chunk_num"`
+	Chunks   []ChunkInfo `json:"chunks"`
+}
+
+type ChunkInfo struct {
+	Index int `json:"index"`
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
+func ceilDiv(a, b int) int {
+	if b == 0 {
+		panic("division by zero")
+	}
+	return (a + b - 1) / b
+}
+
+func (t *TaskCenter) Gen(taskType TaskType, osFs afero.Fs, memFs afero.Fs, metadata domain.FileMetadata) (taskDetails *TaskDetails, err error) {
+	taskId, _ := generateTaskID() // 生成唯一任务 ID
+
+	if taskType == LargeFileUpload {
+		// 上传大文件，需要告知客户端文件分多少片，每一分片对应的字节范围，
+		// 生成分片信息
+		n := ceilDiv(metadata.Size, FileChunkSize)
+		taskDetails = &TaskDetails{
+			TaskId:   taskId,
+			Type:     LargeFileUpload,
+			ChunkNum: n,
+			Chunks:   make([]ChunkInfo, n),
+		}
+
+		var start int
+		var end int
+		for i := 0; i < n-1; i++ {
+			start = i * FileChunkSize
+			end = start + FileChunkSize - 1
+			taskDetails.Chunks[i] = ChunkInfo{i, start, end}
+		}
+
+		start = (n - 1) * FileChunkSize
+		end = metadata.Size - 1
+		taskDetails.Chunks[n-1] = ChunkInfo{n, start, end}
+
+	} else if taskType == LargeFileDownload {
+		// 大文件以目录+块文件的形式保存
+		// 所有这里只需要返回文件块的路径
 	}
 
-	t.taskMap.Store(taskID, task)
+	task := &Task{
+		Status:   TaskPending,
+		Metadata: metadata,
+		memFs:    memFs,
+		Details:  taskDetails,
+	}
 
-	return taskID, nil
+	t.taskMap.Store(taskId, task)
+	return
 }
 
 func (t *TaskCenter) Do(taskId string) (filePath string, fileName string, err error) {
@@ -70,7 +114,7 @@ func (t *TaskCenter) Do(taskId string) (filePath string, fileName string, err er
 		return "", "", errors.New("no such task")
 	}
 
-	switch task.Type {
+	switch task.Details.Type {
 
 	case RegularFileUpload:
 		filePath, _, err = t.handleRegularFileUpload(task)

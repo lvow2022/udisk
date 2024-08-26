@@ -3,7 +3,6 @@ package web
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"github.com/lvow2022/udisk/internel/domain"
 	"github.com/lvow2022/udisk/internel/pkg/code"
 	"github.com/lvow2022/udisk/internel/service"
 	"github.com/lvow2022/udisk/pkg/ginx"
@@ -31,75 +30,45 @@ func (h *FileHandler) RegisterRoutes(server *gin.Engine) {
 	g.POST("/adduser", h.AddUser)
 }
 
-type ValidateUploadRequest struct {
-	domain.FileMetadata
-}
-
 func (h *FileHandler) ValidateUpload(ctx *gin.Context) {
-	var req ValidateUploadRequest
-	if err := ctx.Bind(&req); err != nil {
+	var req service.ValidateUploadRequest // 使用正确的结构体名称
+	err := ctx.Bind(&req)
+	if err != nil {
 		ginx.WriteResponse(ctx, errors.WithCode(code.ErrBind, err.Error()), nil)
 		return
 	}
 
-	metadata := domain.FileMetadata{
-		Name:    req.Name,
-		Size:    req.Size,
-		Type:    req.Type,
-		OwnerID: req.OwnerID,
-		MD5:     req.MD5,
-		Path:    req.Path,
-	}
-	taskId, err := h.fileSvc.ValidateUpload(ctx, "123", metadata)
+	var resp service.ValidateUploadResponse // 使用正确的结构体名称
+
+	resp.TaskDetails, err = h.fileSvc.ValidateUpload(ctx, "123", req.Metadata)
 	if err != nil {
 		ginx.WriteResponse(ctx, err, nil)
+		return // 确保在错误时返回
 	}
 
-	type TaskDetails struct {
-		TaskID string `json:"task_id"`
-		//FileName string `json:"fileName"`
-		//Status   string `json:"status"`
-	}
-
-	ginx.WriteResponse(ctx, nil, TaskDetails{taskId})
-	return
-}
-
-type ValidateDownloadRequest struct {
+	// Go 会自动解引用指针，因此可以直接传递结构体
+	ginx.WriteResponse(ctx, nil, resp)
 }
 
 func (h *FileHandler) ValidateDownload(ctx *gin.Context) {
-	type request struct {
-		domain.FileMetadata
-	}
 
-	var req request
-	if err := ctx.Bind(&req); err != nil {
-		return
-	}
+	//if err := ctx.Bind(&req); err != nil {
+	//	return
+	//}
+	//
+	//taskDetails, err := h.fileSvc.ValidateDownload(ctx, "123", req)
+	//if err != nil {
+	//	ginx.WriteResponse(ctx, err, nil)
+	//	return
+	//}
+	//
+	//type TaskDetails struct {
+	//	TaskID string `json:"task_id"`
+	//	//FileName string `json:"fileName"`
+	//	//Status   string `json:"status"`
+	//}
 
-	metadata := domain.FileMetadata{
-		Name:    req.Name,
-		Size:    req.Size,
-		Type:    req.Type,
-		OwnerID: req.OwnerID,
-		MD5:     req.MD5,
-		Path:    req.Path,
-	}
-	taskId, err := h.fileSvc.ValidateDownload(ctx, "123", metadata)
-	if err != nil {
-		ginx.WriteResponse(ctx, err, nil)
-		return
-	}
-
-	type TaskDetails struct {
-		TaskID string `json:"task_id"`
-		//FileName string `json:"fileName"`
-		//Status   string `json:"status"`
-	}
-
-	ginx.WriteResponse(ctx, nil, TaskDetails{taskId})
-
+	//ginx.WriteResponse(ctx, nil, taskDetails)
 	return
 }
 
