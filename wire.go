@@ -8,7 +8,6 @@ import (
 	"github.com/lvow2022/udisk/internel/repository"
 	"github.com/lvow2022/udisk/internel/repository/dao"
 	"github.com/lvow2022/udisk/internel/service"
-	"github.com/lvow2022/udisk/internel/service/file"
 	"github.com/lvow2022/udisk/internel/web"
 	"github.com/lvow2022/udisk/ioc"
 )
@@ -25,7 +24,6 @@ func InitWebServer() *gin.Engine {
 		repository.NewUserRepository,
 		repository.NewFileRepository,
 
-		file.NewTransferManager,
 		// service
 		service.NewUserService,
 		service.NewFileService,

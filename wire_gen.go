@@ -11,7 +11,6 @@ import (
 	"github.com/lvow2022/udisk/internel/repository"
 	"github.com/lvow2022/udisk/internel/repository/dao"
 	"github.com/lvow2022/udisk/internel/service"
-	"github.com/lvow2022/udisk/internel/service/file"
 	"github.com/lvow2022/udisk/internel/web"
 	"github.com/lvow2022/udisk/ioc"
 )
@@ -25,9 +24,8 @@ func InitWebServer() *gin.Engine {
 	userRepository := repository.NewUserRepository(userDAO)
 	userService := service.NewUserService(userRepository)
 	userHandler := web.NewUserHandler(userService)
-	transferManager := file.NewTransferManager()
 	fileRepository := repository.NewFileRepository()
-	fileService := service.NewFileService(transferManager, fileRepository)
+	fileService := service.NewFileService(fileRepository)
 	fileHandler := web.NewFileHandler(fileService)
 	engine := ioc.InitWebServer(v, userHandler, fileHandler)
 	return engine

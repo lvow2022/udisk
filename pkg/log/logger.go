@@ -8,7 +8,7 @@ import (
 )
 
 // BasicLogger is the logger (wrapper for logrus)
-type BasicLogger struct {
+type basicLogger struct {
 	*logrus.Logger
 }
 
@@ -19,14 +19,14 @@ type Level logrus.Level
 type Formatter logrus.Formatter
 
 // 全局变量 logger
-var logger *BasicLogger
+var Logger *basicLogger
 
 // init 函数用于初始化全局 logger
 func init() {
-	logger = &BasicLogger{logrus.New()}
-	logger.Out = os.Stdout
-	logger.Level = logrus.DebugLevel
-	logger.Formatter = &logrus.TextFormatter{
+	Logger = &basicLogger{logrus.New()}
+	Logger.Out = os.Stdout
+	Logger.Level = logrus.DebugLevel
+	Logger.Formatter = &logrus.TextFormatter{
 		DisableColors: false,
 		FullTimestamp: true,
 	}
@@ -34,22 +34,22 @@ func init() {
 
 // SetOutput sets the logger output.
 func SetOutput(out io.Writer) {
-	logger.Out = out
+	Logger.Out = out
 }
 
 // SetFormatter sets the logger formatter.
 func SetFormatter(formatter Formatter) {
-	logger.Formatter = logrus.Formatter(formatter)
+	Logger.Formatter = logrus.Formatter(formatter)
 }
 
 // SetLevel sets the logger level.
 func SetLevel(level Level) {
-	logger.Level = logrus.Level(level)
+	Logger.Level = logrus.Level(level)
 }
 
 // GetLevel returns the logger level.
 func GetLevel() Level {
-	return Level(logger.Level)
+	return Level(Logger.Level)
 }
 
 var (
