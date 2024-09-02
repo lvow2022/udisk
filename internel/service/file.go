@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/lvow2022/udisk/internel/repository"
+	"github.com/lvow2022/udisk/internel/service/ufs"
 	"io"
 	"os"
 	"path/filepath"
@@ -30,10 +31,10 @@ type FileService interface {
 }
 
 type fileService struct {
-	mu       sync.RWMutex
-	memFsMap sync.Map // 每个用户拥有一个独立的内存文件系统
-	repo     repository.FileRepository
-	osFs     afero.Fs
+	mu    sync.RWMutex
+	usrFs sync.Map
+	repo  repository.FileRepository
+	osFs  afero.Fs
 }
 
 func (f *fileService) MakeDirectory(ctx context.Context, path string) error {
@@ -44,13 +45,13 @@ func (f *fileService) MakeDirectory(ctx context.Context, path string) error {
 // AddUser 添加新用户，分配内存文件系统
 func (f *fileService) AddUser(ctx context.Context, userId string) error {
 	// 检查用户是否已经存在
-	_, ok := f.memFsMap.Load(userId)
+	_, ok := f.usrFs.Load(userId)
 	if ok {
 		return fmt.Errorf("user %s already exists", userId)
 	}
 
 	// 创建新的内存文件系统并存储到用户映射中
-	f.memFsMap.Store(userId, afero.NewMemMapFs())
+	f.usrFs.Store(userId, ufs.NewUFileSystem())
 	return nil
 }
 
@@ -191,7 +192,7 @@ func NewFileService(repo repository.FileRepository) FileService {
 
 // getMemFs 获取用户的内存文件系统
 func (f *fileService) getMemFs(userId string) (afero.Fs, error) {
-	value, ok := f.memFsMap.Load(userId)
+	value, ok := f.usrFs.Load(userId)
 	if !ok {
 		return nil, fmt.Errorf("memory filesystem for user %s not found", userId)
 	}
