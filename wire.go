@@ -9,6 +9,7 @@ import (
 	"github.com/lvow2022/udisk/internel/repository/dao"
 	"github.com/lvow2022/udisk/internel/service"
 	"github.com/lvow2022/udisk/internel/web"
+	ijwt "github.com/lvow2022/udisk/internel/web/jwt"
 	"github.com/lvow2022/udisk/ioc"
 )
 
@@ -33,6 +34,7 @@ func InitWebServer() *gin.Engine {
 		web.NewFileHandler,
 
 		// app
+		ijwt.NewLocalJWTHandler,
 		ioc.InitGinMiddlewares,
 		ioc.InitWebServer,
 	)

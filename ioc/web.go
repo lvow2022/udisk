@@ -4,6 +4,8 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/lvow2022/udisk/internel/web"
+	ijwt "github.com/lvow2022/udisk/internel/web/jwt"
+	"github.com/lvow2022/udisk/internel/web/middleware"
 	"strings"
 	"time"
 )
@@ -17,7 +19,7 @@ func InitWebServer(mdls []gin.HandlerFunc,
 	return server
 }
 
-func InitGinMiddlewares() []gin.HandlerFunc {
+func InitGinMiddlewares(jwtHdl ijwt.Handler) []gin.HandlerFunc {
 	return []gin.HandlerFunc{
 		cors.New(cors.Config{
 			//AllowAllOrigins: true,
@@ -41,5 +43,6 @@ func InitGinMiddlewares() []gin.HandlerFunc {
 		func(ctx *gin.Context) {
 			println("这是我的 Middleware")
 		},
+		middleware.NewLoginJWTMiddlewareBuilder(jwtHdl).CheckLogin(),
 	}
 }

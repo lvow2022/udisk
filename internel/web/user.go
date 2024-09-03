@@ -5,6 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lvow2022/udisk/internel/domain"
 	"github.com/lvow2022/udisk/internel/service"
+	ijwt "github.com/lvow2022/udisk/internel/web/jwt"
 	"net/http"
 )
 
@@ -16,24 +17,26 @@ const (
 )
 
 type UserHandler struct {
+	ijwt.Handler
 	emailRegex     *regexp.Regexp
 	passwordRexExp *regexp.Regexp
-	userSvc        service.UserService
+	usrSvc         service.UsrService
 }
 
-func NewUserHandler(userSvc service.UserService) *UserHandler {
+func NewUserHandler(usrSvc service.UsrService, jwtHdl ijwt.Handler) *UserHandler {
 	return &UserHandler{
 		emailRegex:     regexp.MustCompile(emailRegexPattern, regexp.None),
 		passwordRexExp: regexp.MustCompile(passwordRegexPattern, regexp.None),
-		userSvc:        userSvc,
+		usrSvc:         usrSvc,
+		Handler:        jwtHdl,
 	}
 }
 
 func (h *UserHandler) RegisterRoutes(server *gin.Engine) {
 	ug := server.Group("/users")
 	ug.POST("/signup", h.SignUp)
-	ug.POST("/signin", h.SignIn)
-	ug.POST("/signout", h.SignOut)
+	ug.POST("/login", h.Login)
+	ug.POST("/logout", h.Logout)
 }
 
 func (h *UserHandler) SignUp(ctx *gin.Context) {
@@ -73,7 +76,7 @@ func (h *UserHandler) SignUp(ctx *gin.Context) {
 		ctx.String(http.StatusOK, "密码必须包含字母")
 	}
 
-	err = h.userSvc.Signup(ctx, domain.User{
+	err = h.usrSvc.Signup(ctx, domain.User{
 		Email:    reqBody.Email,
 		Password: reqBody.Password,
 	})
@@ -87,10 +90,27 @@ func (h *UserHandler) SignUp(ctx *gin.Context) {
 	}
 }
 
-func (h *UserHandler) SignIn(context *gin.Context) {
+func (h *UserHandler) Login(ctx *gin.Context) {
+	u, err := h.usrSvc.Login(ctx, req.Email, req.Password)
+	switch err {
+	case nil:
+		err = h.SetLoginToken(ctx, u.Id)
+		if err != nil {
 
+		}
+
+	case service.ErrInvalidUserOrPassword:
+		return
+	default:
+		return
+	}
 }
 
-func (h *UserHandler) SignOut(context *gin.Context) {
-
+func (h *UserHandler) Logout(ctx *gin.Context) {
+	err := h.ClearToken(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusOK, ginx.Result{Code: 5, Msg: "系统错误"})
+		return
+	}
+	ctx.JSON(http.StatusOK, ginx.Result{Msg: "退出登录成功"})
 }
