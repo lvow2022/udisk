@@ -2,10 +2,13 @@ package ufs
 
 import (
 	"fmt"
-	"github.com/spf13/afero"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/spf13/afero"
 )
 
 // uFileSystem represents an in-memory file system with a current working directory.
@@ -13,18 +16,50 @@ type uFileSystem struct {
 	fs      afero.Fs
 	cwd     string // Current working directory
 	fsMutex sync.RWMutex
-	// In-memory directory structure: path -> list of entries (files and directories)
-	dirMap map[string][]string
+
+	persistor Persistor
+	dirMap    map[string][]string
 }
 
 // NewUFileSystem creates a new uFileSystem instance with an in-memory filesystem.
-func NewUFileSystem() *uFileSystem {
+func NewUFileSystem(db *gorm.DB) *uFileSystem {
 	fs := afero.NewMemMapFs()
-	return &uFileSystem{
-		fs:     fs,
-		cwd:    "/",
-		dirMap: make(map[string][]string),
+	ufs := &uFileSystem{
+		fs:        fs,
+		cwd:       "/",
+		persistor: NewGormPersistor(db),
 	}
+
+	// Restore the file system state from the database
+	ufs.persistor.LoadDirMap("/")
+
+	return ufs
+}
+
+// persistFile persists the metadata of a specific file or directory to disk using gob encoding.
+func (ufs *uFileSystem) persistFile(path string) error {
+	ufs.fsMutex.RLock()
+	defer ufs.fsMutex.RUnlock()
+	isDir, err := ufs.IsDir(path)
+	if err != nil {
+		return err
+	}
+	return ufs.persistor.PersistFile(path, isDir)
+}
+
+// removePersistedFile removes the persisted snapshot file associated with a deleted file or directory.
+func (ufs *uFileSystem) removePersistedFile(path string) error {
+	absPath := ufs.resolvePath(path)
+	snapshotPath := filepath.Join(filepath.Dir(absPath), ".dir_snapshot.gob")
+
+	// Remove the persisted snapshot file
+	return ufs.fs.Remove(snapshotPath)
+}
+
+// LoadDirMap loads the directory map from the database.
+func (ufs *uFileSystem) LoadDirMap() error {
+	ufs.dirMap, _ = ufs.persistor.LoadDirMap("/")
+	return nil
 }
 
 // Pwd returns the current working directory.
@@ -91,9 +126,21 @@ func (ufs *uFileSystem) Mv(src, dst string) error {
 		ufs.dirMap[dstDir] = []string{dstBase}
 	}
 
+	// Persist changes to the source and destination directories
+	if err := ufs.persistFile(srcDir); err != nil {
+		return fmt.Errorf("failed to persist source directory data: %v", err)
+	}
+	if err := ufs.persistFile(dstDir); err != nil {
+		return fmt.Errorf("failed to persist destination directory data: %v", err)
+	}
+
+	// Persist changes in the database
+	if err := ufs.persistor.UpdatePaths(srcPath, dstPath); err != nil {
+		return fmt.Errorf("failed to update paths in database: %v", err)
+	}
+
 	// Remove any previous entry in the destination path, as it should not be listed twice
 	delete(ufs.dirMap, dstPath)
-
 	return nil
 }
 
@@ -138,6 +185,12 @@ func (ufs *uFileSystem) Mkdir(path string, perm os.FileMode) error {
 	}
 	ufs.dirMap[dirPath] = append(entries, filepath.Base(absPath))
 	ufs.dirMap[absPath] = []string{} // Initialize the new directory
+
+	// Persist the changes for the parent directory
+	if err := ufs.persistFile(dirPath); err != nil {
+		return fmt.Errorf("failed to persist parent directory data: %v", err)
+	}
+
 	return nil
 }
 
@@ -163,6 +216,11 @@ func (ufs *uFileSystem) Create(name string) (afero.File, error) {
 		entries = []string{}
 	}
 	ufs.dirMap[dirPath] = append(entries, filepath.Base(absPath))
+
+	// Persist the changes for the parent directory
+	if err := ufs.persistFile(dirPath); err != nil {
+		return nil, fmt.Errorf("failed to persist directory data: %v", err)
+	}
 	return file, nil
 }
 
@@ -233,6 +291,11 @@ func (ufs *uFileSystem) Remove(name string) error {
 		}
 	}
 	delete(ufs.dirMap, absPath)
+
+	// Remove the persisted data
+	if err := ufs.persistor.RemovePersistedFile(name); err != nil {
+		return fmt.Errorf("failed to remove persisted data: %v", err)
+	}
 	return nil
 }
 
@@ -245,19 +308,43 @@ func (ufs *uFileSystem) ReadFile(name string) ([]byte, error) {
 // WriteFile writes data to a file.
 func (ufs *uFileSystem) WriteFile(name string, data []byte, perm os.FileMode) error {
 	absPath := ufs.resolvePath(name)
-	return afero.WriteFile(ufs.fs, absPath, data, perm)
+	err := afero.WriteFile(ufs.fs, absPath, data, perm)
+	if err != nil {
+		return err
+	}
+
+	// Persist the changes for the parent directory
+	if err := ufs.persistFile(filepath.Dir(absPath)); err != nil {
+		return fmt.Errorf("failed to persist directory data: %v", err)
+	}
+	return nil
 }
 
-// resolvePath resolves a given path relative to the current working directory.
+// resolvePath resolves a relative path to an absolute path based on the current working directory.
 func (ufs *uFileSystem) resolvePath(path string) string {
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(ufs.cwd, path)
 	}
-	return filepath.Clean(filepath.Join(ufs.cwd, path))
+	return filepath.Clean(path)
+}
+
+// IsDir checks if the given path is a directory.
+func (ufs *uFileSystem) IsDir(path string) (bool, error) {
+	ufs.fsMutex.RLock()
+	defer ufs.fsMutex.RUnlock()
+
+	absPath := ufs.resolvePath(path)
+	info, err := ufs.fs.Stat(absPath)
+	if err != nil {
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 func testUfs() {
-	fs := NewUFileSystem()
+	db, _ := gorm.Open(sqlite.Open("ufs.db"), &gorm.Config{})
+
+	fs := NewUFileSystem(db)
 
 	// Test MkdirAll
 	err := fs.Mkdir("/testdir/parent/subdir", 0755)
