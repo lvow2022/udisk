@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/afero"
 )
 
-// uFileSystem represents an in-memory file system with a current working directory.
-type uFileSystem struct {
+// UserFileSystem represents an in-memory file system with a current working directory.
+type UserFileSystem struct {
 	fs      afero.Fs
 	cwd     string // Current working directory
 	fsMutex sync.RWMutex
@@ -20,10 +20,10 @@ type uFileSystem struct {
 	dirMap    map[string][]string
 }
 
-// NewUFileSystem creates a new uFileSystem instance with an in-memory filesystem.
-func NewUFileSystem(db *gorm.DB) *uFileSystem {
+// NewUserFileSystem creates a new UserFileSystem instance with an in-memory filesystem.
+func NewUserFileSystem(db *gorm.DB) *UserFileSystem {
 	fs := afero.NewMemMapFs()
-	ufs := &uFileSystem{
+	ufs := &UserFileSystem{
 		fs:        fs,
 		cwd:       "/",
 		persistor: NewGormPersistor(db),
@@ -37,7 +37,7 @@ func NewUFileSystem(db *gorm.DB) *uFileSystem {
 }
 
 // persistFile persists the metadata of a specific file or directory to disk using gob encoding.
-func (ufs *uFileSystem) persistFile(path string) error {
+func (ufs *UserFileSystem) persistFile(path string) error {
 	isDir, err := ufs.IsDir(path)
 	if err != nil {
 		return err
@@ -46,13 +46,13 @@ func (ufs *uFileSystem) persistFile(path string) error {
 }
 
 // ReadFile reads the contents of a file.
-func (ufs *uFileSystem) ReadFile(name string) ([]byte, error) {
+func (ufs *UserFileSystem) ReadFile(name string) ([]byte, error) {
 	absPath := ufs.resolvePath(name)
 	return afero.ReadFile(ufs.fs, absPath)
 }
 
 // WriteFile writes data to a file.
-func (ufs *uFileSystem) WriteFile(name string, data []byte, perm os.FileMode) error {
+func (ufs *UserFileSystem) WriteFile(name string, data []byte, perm os.FileMode) error {
 	absPath := ufs.resolvePath(name)
 	err := afero.WriteFile(ufs.fs, absPath, data, perm)
 	if err != nil {
@@ -67,7 +67,7 @@ func (ufs *uFileSystem) WriteFile(name string, data []byte, perm os.FileMode) er
 }
 
 // Mv moves or renames a file or directory and updates the in-memory directory map.
-func (ufs *uFileSystem) Mv(src, dst string) error {
+func (ufs *UserFileSystem) Mv(src, dst string) error {
 	ufs.fsMutex.Lock()
 	defer ufs.fsMutex.Unlock()
 	srcPath := ufs.resolvePath(src)
@@ -116,7 +116,7 @@ func (ufs *uFileSystem) Mv(src, dst string) error {
 }
 
 // Ls lists the contents of the specified directory or the current working directory if path is empty.
-func (ufs *uFileSystem) Ls(path string) ([]string, error) {
+func (ufs *UserFileSystem) Ls(path string) ([]string, error) {
 	dirPath := ufs.resolvePath(path)
 
 	ufs.fsMutex.RLock()
@@ -131,7 +131,7 @@ func (ufs *uFileSystem) Ls(path string) ([]string, error) {
 }
 
 // Mkdir creates a new directory and all necessary parent directories using afero's MkdirAll.
-func (ufs *uFileSystem) Mkdir(path string, perm os.FileMode) error {
+func (ufs *UserFileSystem) Mkdir(path string, perm os.FileMode) error {
 	ufs.fsMutex.Lock()
 	defer ufs.fsMutex.Unlock()
 
@@ -161,7 +161,7 @@ func (ufs *uFileSystem) Mkdir(path string, perm os.FileMode) error {
 }
 
 // Create creates a new file and updates the in-memory directory map.
-func (ufs *uFileSystem) Create(name string) (afero.File, error) {
+func (ufs *UserFileSystem) Create(name string) (afero.File, error) {
 	absPath := ufs.resolvePath(name)
 	file, err := ufs.fs.Create(absPath)
 	if err != nil {
@@ -180,7 +180,7 @@ func (ufs *uFileSystem) Create(name string) (afero.File, error) {
 }
 
 // Remove removes a file or directory.
-func (ufs *uFileSystem) Remove(name string) error {
+func (ufs *UserFileSystem) Remove(name string) error {
 	absPath := ufs.resolvePath(name)
 
 	ufs.fsMutex.Lock()
@@ -288,7 +288,7 @@ func (ufs *uFileSystem) Remove(name string) error {
 }
 
 // resolvePath resolves a relative path to an absolute path based on the current working directory.
-func (ufs *uFileSystem) resolvePath(path string) string {
+func (ufs *UserFileSystem) resolvePath(path string) string {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(ufs.cwd, path)
 	}
@@ -296,7 +296,7 @@ func (ufs *uFileSystem) resolvePath(path string) string {
 }
 
 // IsDir checks if the given path is a directory.
-func (ufs *uFileSystem) IsDir(path string) (bool, error) {
+func (ufs *UserFileSystem) IsDir(path string) (bool, error) {
 	absPath := ufs.resolvePath(path)
 	info, err := ufs.fs.Stat(absPath)
 	if err != nil {

@@ -39,7 +39,7 @@ func (p *GormPersistor) PersistFile(path string, isDir bool) error {
 		dirPath := filepath.Dir(absPath)
 
 		// Check if the parent directory exists, if not persist it first
-		if dirPath != "/" && dirPath != "." && !p.pathExists(dirPath) {
+		if dirPath != "/" && dirPath != "." && !p.PathExists(dirPath) {
 			// Recursively persist the parent directory
 			if err := p.PersistFile(dirPath, true); err != nil {
 				return fmt.Errorf("failed to persist parent directory %s: %v", dirPath, err)
@@ -114,8 +114,8 @@ func (p *GormPersistor) UpdatePaths(srcPath, dstPath string) error {
 	})
 }
 
-// pathExists checks if a given path already exists in the database.
-func (p *GormPersistor) pathExists(path string) bool {
+// PathExists checks if a given path already exists in the database.
+func (p *GormPersistor) PathExists(path string) bool {
 	var count int64
 	err := p.db.Model(&FileSystem{}).Where("path = ?", filepath.Clean(path)).Count(&count).Error
 	return err == nil && count > 0

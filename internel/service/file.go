@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/lvow2022/udisk/internel/pkg/ufs"
 	"github.com/lvow2022/udisk/internel/repository"
-	"github.com/lvow2022/udisk/internel/service/ufs"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,19 +22,19 @@ type FileService interface {
 	Upload(ctx *gin.Context, chunkIndex int, chunkMd5, fileMd5 string) error
 	Download(ctx *gin.Context, filePath, chunkIndex string) (path string, err error)
 	CompleteUpload(ctx *gin.Context, fileMd5 string, totalChunks int) error
-	ListDirectory(ctx context.Context, userId string, path string) ([]os.FileInfo, error)
+	ListDirectory(ctx context.Context, userId string, path string) ([]string, error)
 	MakeDirectory(ctx context.Context, path string) error
 	FileStat(ctx context.Context, path string) (os.FileInfo, error)
 	ValidateDownload(ctx *gin.Context, userId string, src, dst string) (md5 string, chunkCount int, err error)
 	ValidateUpload(ctx context.Context, userId string, src, dst string) (chunkSize int, err error)
-	AddUser(ctx context.Context, userId string) error
+	//AddUser(ctx context.Context, userId string) error
 }
 
 type fileService struct {
-	mu    sync.RWMutex
-	usrFs sync.Map
-	repo  repository.FileRepository
-	osFs  afero.Fs
+	mu     sync.RWMutex
+	ufsMgr ufs.UserManager
+	repo   repository.FileRepository
+	osFs   afero.Fs
 }
 
 func (f *fileService) MakeDirectory(ctx context.Context, path string) error {
@@ -43,17 +43,17 @@ func (f *fileService) MakeDirectory(ctx context.Context, path string) error {
 }
 
 // AddUser 添加新用户，分配内存文件系统
-func (f *fileService) AddUser(ctx context.Context, userId string) error {
-	// 检查用户是否已经存在
-	_, ok := f.usrFs.Load(userId)
-	if ok {
-		return fmt.Errorf("user %s already exists", userId)
-	}
-
-	// 创建新的内存文件系统并存储到用户映射中
-	f.usrFs.Store(userId, ufs.NewUFileSystem())
-	return nil
-}
+//func (f *fileService) AddUser(ctx context.Context, userId string) error {
+//	// 检查用户是否已经存在
+//	_, ok := f.usrFs.Load(userId)
+//	if ok {
+//		return fmt.Errorf("user %s already exists", userId)
+//	}
+//
+//	// 创建新的内存文件系统并存储到用户映射中
+//	f.usrFs.Store(userId, ufs.NewUFileSystem())
+//	return nil
+//}
 
 func (f *fileService) ValidateDownload(ctx *gin.Context, userId string, src, dst string) (md5 string, chunkCount int, err error) {
 	// 检查 src 是否存在
@@ -151,19 +151,12 @@ func (f *fileService) Download(ctx *gin.Context, filePath, chunkIndex string) (p
 }
 
 // ListDirectory 列出目录内容
-func (f *fileService) ListDirectory(ctx context.Context, userId string, path string) ([]os.FileInfo, error) {
+func (f *fileService) ListDirectory(ctx context.Context, userId string, path string) ([]string, error) {
 	// 从用户的内存文件系统中获取 md5
-	memFs, err := f.getMemFs(userId)
+	files, err := f.ufsMgr.User(userId).Ls(path)
+
 	if err != nil {
 		return nil, err
-	}
-	files, err := afero.ReadDir(memFs, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list directory: %v", err)
-	}
-
-	for _, v := range files {
-		fmt.Println("File:", v.Name())
 	}
 
 	return files, nil
@@ -190,35 +183,14 @@ func NewFileService(repo repository.FileRepository) FileService {
 	}
 }
 
-// getMemFs 获取用户的内存文件系统
-func (f *fileService) getMemFs(userId string) (afero.Fs, error) {
-	value, ok := f.usrFs.Load(userId)
-	if !ok {
-		return nil, fmt.Errorf("memory filesystem for user %s not found", userId)
-	}
-	return value.(afero.Fs), nil
-}
-
 // CheckIfFileExists 检查用户目录下是否存在指定路径的文件,如果存在返回文件 md5
 func (f *fileService) CheckIfFileExists(userId string, path string) (md5 string, err error) {
 	// 验证 src 路径并获取 md5
-	memFs, err := f.getMemFs(userId)
+	md5Byte, err := f.ufsMgr.User(userId).ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-
-	file, err := memFs.OpenFile(path, os.O_RDONLY, os.ModePerm)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	bytes, err := io.ReadAll(file)
-	if err != nil {
-		return "", err
-	}
-
-	return string(bytes), nil
+	return string(md5Byte), nil
 }
 
 func (f *fileService) countFilesInDirectory(directory string) (int, error) {
