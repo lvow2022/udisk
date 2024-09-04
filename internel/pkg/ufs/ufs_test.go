@@ -17,7 +17,7 @@ func TestUfs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
 	}
-	fs := NewUFileSystem(db)
+	fs := NewUserFileSystem(db)
 
 	// Test MkdirAll
 	if err := fs.Mkdir("/testdir/parent/subdir", 0755); err != nil {
