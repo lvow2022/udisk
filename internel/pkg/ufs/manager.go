@@ -5,23 +5,27 @@ import (
 	"sync"
 )
 
+type UserManager interface {
+	User(username string) *UserFileSystem
+}
+
 // UserManager manages file systems for multiple users.
-type UserManager struct {
+type userManager struct {
 	users map[string]*UserFileSystem
 	mutex sync.RWMutex
 	db    *gorm.DB
 }
 
 // NewUserManager creates a new UserManager instance.
-func NewUserManager(db *gorm.DB) *UserManager {
-	return &UserManager{
+func NewUserManager(db *gorm.DB) UserManager {
+	return &userManager{
 		users: make(map[string]*UserFileSystem),
 		db:    db,
 	}
 }
 
 // User returns the file system for a specific user, creating it if necessary.
-func (um *UserManager) User(username string) *UserFileSystem {
+func (um *userManager) User(username string) *UserFileSystem {
 	um.mutex.RLock()
 	ufs, ok := um.users[username]
 	um.mutex.RUnlock()

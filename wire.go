@@ -5,6 +5,7 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/wire"
+	"github.com/lvow2022/udisk/internel/pkg/ufs"
 	"github.com/lvow2022/udisk/internel/repository"
 	"github.com/lvow2022/udisk/internel/repository/dao"
 	"github.com/lvow2022/udisk/internel/service"
@@ -20,7 +21,7 @@ func InitWebServer() *gin.Engine {
 
 		// dao
 		dao.NewUserDAO,
-
+		ufs.NewUserManager,
 		// repo
 		repository.NewUserRepository,
 		repository.NewFileRepository,

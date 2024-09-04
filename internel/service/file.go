@@ -31,10 +31,21 @@ type FileService interface {
 }
 
 type fileService struct {
-	mu     sync.RWMutex
-	ufsMgr ufs.UserManager
-	repo   repository.FileRepository
-	osFs   afero.Fs
+	mutex sync.RWMutex
+	um    ufs.UserManager
+	repo  repository.FileRepository
+	osFs  afero.Fs
+}
+
+// NewFileService 创建新的文件服务
+func NewFileService(repo repository.FileRepository, um ufs.UserManager) FileService {
+	// 使用 os 文件系统作为基础文件系统
+	baseFs := afero.NewOsFs()
+	return &fileService{
+		osFs: afero.NewBasePathFs(baseFs, "./tmp"),
+		repo: repo,
+		um:   um,
+	}
 }
 
 func (f *fileService) MakeDirectory(ctx context.Context, path string) error {
@@ -65,7 +76,7 @@ func (f *fileService) ValidateDownload(ctx *gin.Context, userId string, src, dst
 
 	// 查找真实路径
 	osPath := filepath.Join("./tmp", md5)
-	chunkCount, err = f.countFilesInDirectory(osPath)
+	chunkCount, err = f.countFiles(osPath)
 	if err != nil {
 		return "", 0, err
 	}
@@ -153,7 +164,7 @@ func (f *fileService) Download(ctx *gin.Context, filePath, chunkIndex string) (p
 // ListDirectory 列出目录内容
 func (f *fileService) ListDirectory(ctx context.Context, userId string, path string) ([]string, error) {
 	// 从用户的内存文件系统中获取 md5
-	files, err := f.ufsMgr.User(userId).Ls(path)
+	files, err := f.um.User(userId).Ls(path)
 
 	if err != nil {
 		return nil, err
@@ -173,27 +184,17 @@ func (f *fileService) FileStat(ctx context.Context, path string) (os.FileInfo, e
 	return info, nil
 }
 
-// NewFileService 创建新的文件服务
-func NewFileService(repo repository.FileRepository) FileService {
-	// 使用 os 文件系统作为基础文件系统
-	baseFs := afero.NewOsFs()
-	return &fileService{
-		osFs: afero.NewBasePathFs(baseFs, "./tmp"),
-		repo: repo,
-	}
-}
-
 // CheckIfFileExists 检查用户目录下是否存在指定路径的文件,如果存在返回文件 md5
 func (f *fileService) CheckIfFileExists(userId string, path string) (md5 string, err error) {
 	// 验证 src 路径并获取 md5
-	md5Byte, err := f.ufsMgr.User(userId).ReadFile(path)
+	md5Byte, err := f.um.User(userId).ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 	return string(md5Byte), nil
 }
 
-func (f *fileService) countFilesInDirectory(directory string) (int, error) {
+func (f *fileService) countFiles(directory string) (int, error) {
 	// 打开目录
 	dir, err := os.Open(directory)
 	if err != nil {
