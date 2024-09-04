@@ -12,6 +12,7 @@ type Persistor interface {
 	RemovePersistedFile(path string) error
 	LoadDirMap(path string) (dirMap map[string][]string, err error)
 	UpdatePaths(srcPath, dstPath string) error
+	PathExists(path string) bool
 }
 
 type FileSystem struct {
@@ -36,6 +37,14 @@ func (p *GormPersistor) PersistFile(path string, isDir bool) error {
 	return p.db.Transaction(func(tx *gorm.DB) error {
 		absPath := filepath.Clean(path)
 		dirPath := filepath.Dir(absPath)
+
+		// Check if the parent directory exists, if not persist it first
+		if dirPath != "/" && dirPath != "." && !p.pathExists(dirPath) {
+			// Recursively persist the parent directory
+			if err := p.PersistFile(dirPath, true); err != nil {
+				return fmt.Errorf("failed to persist parent directory %s: %v", dirPath, err)
+			}
+		}
 
 		// Remove existing entry for the path
 		if err := tx.Where("path = ?", absPath).Delete(&FileSystem{}).Error; err != nil {
@@ -103,6 +112,13 @@ func (p *GormPersistor) UpdatePaths(srcPath, dstPath string) error {
 		}
 		return nil
 	})
+}
+
+// pathExists checks if a given path already exists in the database.
+func (p *GormPersistor) pathExists(path string) bool {
+	var count int64
+	err := p.db.Model(&FileSystem{}).Where("path = ?", filepath.Clean(path)).Count(&count).Error
+	return err == nil && count > 0
 }
 
 // Helper methods

@@ -68,6 +68,8 @@ func (ufs *uFileSystem) WriteFile(name string, data []byte, perm os.FileMode) er
 
 // Mv moves or renames a file or directory and updates the in-memory directory map.
 func (ufs *uFileSystem) Mv(src, dst string) error {
+	ufs.fsMutex.Lock()
+	defer ufs.fsMutex.Unlock()
 	srcPath := ufs.resolvePath(src)
 	dstPath := ufs.resolvePath(dst)
 
@@ -77,9 +79,6 @@ func (ufs *uFileSystem) Mv(src, dst string) error {
 		return err
 	}
 
-	ufs.fsMutex.Lock()
-	defer ufs.fsMutex.Unlock()
-
 	// Update the in-memory directory map
 	srcDir := filepath.Dir(srcPath)
 	dstDir := filepath.Dir(dstPath)
@@ -88,7 +87,7 @@ func (ufs *uFileSystem) Mv(src, dst string) error {
 
 	// Remove the entry from the source directory
 	entries := ufs.dirMap[srcDir]
-	newEntries := []string{}
+	var newEntries []string
 	for _, entry := range entries {
 		if entry != srcBase {
 			newEntries = append(newEntries, entry)
@@ -133,6 +132,9 @@ func (ufs *uFileSystem) Ls(path string) ([]string, error) {
 
 // Mkdir creates a new directory and all necessary parent directories using afero's MkdirAll.
 func (ufs *uFileSystem) Mkdir(path string, perm os.FileMode) error {
+	ufs.fsMutex.Lock()
+	defer ufs.fsMutex.Unlock()
+
 	absPath := ufs.resolvePath(path)
 
 	// Use afero's MkdirAll to create the directory and its parents
@@ -140,16 +142,22 @@ func (ufs *uFileSystem) Mkdir(path string, perm os.FileMode) error {
 		return err
 	}
 
-	ufs.fsMutex.Lock()
-	defer ufs.fsMutex.Unlock()
-
 	// Update the in-memory directory map
 	dirPath := filepath.Dir(absPath)
 	ufs.dirMap[dirPath] = append(ufs.dirMap[dirPath], filepath.Base(absPath))
 	ufs.dirMap[absPath] = []string{} // Initialize the new directory
 
-	// Persist the changes for the parent directory
-	return ufs.persistFile(dirPath)
+	// Persist the parent directory first
+	if err := ufs.persistFile(dirPath); err != nil {
+		return fmt.Errorf("failed to persist parent directory %s: %v", dirPath, err)
+	}
+
+	// Persist the new directory
+	if err := ufs.persistFile(absPath); err != nil {
+		return fmt.Errorf("failed to persist directory %s: %v", absPath, err)
+	}
+
+	return nil
 }
 
 // Create creates a new file and updates the in-memory directory map.
