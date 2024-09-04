@@ -15,13 +15,13 @@ type Persistor interface {
 }
 
 type FileSystem struct {
-	ID          uint `gorm:"primaryKey"`
-	Name        string
-	Path        string `gorm:"uniqueIndex"`
-	ParentID    uint
-	IsDirectory bool
-	Content     []byte      `gorm:"type:blob"`
-	Parent      *FileSystem `gorm:"foreignKey:ParentID"`
+	ID          uint        `gorm:"column:id;primaryKey;autoIncrement"`                                // 自动递增主键，列名为 "id"
+	Name        string      `gorm:"column:name;size:255;not null"`                                     // 文件或目录名称，最大长度255，非空，列名为 "name"
+	Path        string      `gorm:"column:path;size:1024;not null;uniqueIndex"`                        // 文件或目录路径，最大长度1024，非空，唯一索引，列名为 "path"
+	ParentID    uint        `gorm:"column:parent_id;index"`                                            // 父目录ID，普通索引，列名为 "parent_id"
+	IsDirectory bool        `gorm:"column:is_directory;not null;default:false"`                        // 是否为目录，默认为false（文件），列名为 "is_directory"
+	Content     []byte      `gorm:"column:content;type:blob"`                                          // 文件内容，BLOB类型，列名为 "content"
+	Parent      *FileSystem `gorm:"foreignKey:ParentID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"` // 外键，父目录ID，级联更新和删除
 }
 
 type GormPersistor struct {
@@ -59,9 +59,17 @@ func (p *GormPersistor) PersistFile(path string, isDir bool) error {
 
 func (p *GormPersistor) RemovePersistedFile(path string) error {
 	return p.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("path = ?", path).Or("parent_id = (SELECT id FROM file_system WHERE path = ?)", path).Delete(&FileSystem{}).Error; err != nil {
+		// First, find the parent ID of the path to delete
+		var parentID uint
+		if err := tx.Model(&FileSystem{}).Select("parent_id").Where("path = ?", path).Scan(&parentID).Error; err != nil {
+			return fmt.Errorf("failed to find parent ID: %v", err)
+		}
+
+		// Delete the file and its child entries
+		if err := tx.Where("path = ? OR parent_id = ?", path, parentID).Delete(&FileSystem{}).Error; err != nil {
 			return fmt.Errorf("failed to delete persisted data: %v", err)
 		}
+
 		return nil
 	})
 }

@@ -2,7 +2,6 @@ package ufs
 
 import (
 	"fmt"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"os"
 	"path/filepath"
@@ -28,6 +27,7 @@ func NewUFileSystem(db *gorm.DB) *uFileSystem {
 		fs:        fs,
 		cwd:       "/",
 		persistor: NewGormPersistor(db),
+		dirMap:    make(map[string][]string),
 	}
 
 	// Restore the file system state from the database
@@ -38,8 +38,6 @@ func NewUFileSystem(db *gorm.DB) *uFileSystem {
 
 // persistFile persists the metadata of a specific file or directory to disk using gob encoding.
 func (ufs *uFileSystem) persistFile(path string) error {
-	ufs.fsMutex.RLock()
-	defer ufs.fsMutex.RUnlock()
 	isDir, err := ufs.IsDir(path)
 	if err != nil {
 		return err
@@ -47,40 +45,24 @@ func (ufs *uFileSystem) persistFile(path string) error {
 	return ufs.persistor.PersistFile(path, isDir)
 }
 
-// removePersistedFile removes the persisted snapshot file associated with a deleted file or directory.
-func (ufs *uFileSystem) removePersistedFile(path string) error {
-	absPath := ufs.resolvePath(path)
-	snapshotPath := filepath.Join(filepath.Dir(absPath), ".dir_snapshot.gob")
-
-	// Remove the persisted snapshot file
-	return ufs.fs.Remove(snapshotPath)
+// ReadFile reads the contents of a file.
+func (ufs *uFileSystem) ReadFile(name string) ([]byte, error) {
+	absPath := ufs.resolvePath(name)
+	return afero.ReadFile(ufs.fs, absPath)
 }
 
-// LoadDirMap loads the directory map from the database.
-func (ufs *uFileSystem) LoadDirMap() error {
-	ufs.dirMap, _ = ufs.persistor.LoadDirMap("/")
-	return nil
-}
-
-// Pwd returns the current working directory.
-func (ufs *uFileSystem) Pwd() string {
-	return ufs.cwd
-}
-
-// Cd changes the current working directory.
-func (ufs *uFileSystem) Cd(path string) error {
-	newPath := ufs.resolvePath(path)
-
-	// Check if the directory exists and is a directory
-	info, err := ufs.fs.Stat(newPath)
+// WriteFile writes data to a file.
+func (ufs *uFileSystem) WriteFile(name string, data []byte, perm os.FileMode) error {
+	absPath := ufs.resolvePath(name)
+	err := afero.WriteFile(ufs.fs, absPath, data, perm)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("%s is not a directory", newPath)
-	}
 
-	ufs.cwd = newPath
+	// Persist the changes for the parent directory
+	if err := ufs.persistFile(filepath.Dir(absPath)); err != nil {
+		return fmt.Errorf("failed to persist directory data: %v", err)
+	}
 	return nil
 }
 
@@ -105,26 +87,21 @@ func (ufs *uFileSystem) Mv(src, dst string) error {
 	dstBase := filepath.Base(dstPath)
 
 	// Remove the entry from the source directory
-	if entries, ok := ufs.dirMap[srcDir]; ok {
-		newEntries := []string{}
-		for _, entry := range entries {
-			if entry != srcBase {
-				newEntries = append(newEntries, entry)
-			}
+	entries := ufs.dirMap[srcDir]
+	newEntries := []string{}
+	for _, entry := range entries {
+		if entry != srcBase {
+			newEntries = append(newEntries, entry)
 		}
-		if len(newEntries) > 0 {
-			ufs.dirMap[srcDir] = newEntries
-		} else {
-			delete(ufs.dirMap, srcDir)
-		}
+	}
+	if len(newEntries) > 0 {
+		ufs.dirMap[srcDir] = newEntries
+	} else {
+		delete(ufs.dirMap, srcDir)
 	}
 
 	// Add the entry to the destination directory
-	if entries, ok := ufs.dirMap[dstDir]; ok {
-		ufs.dirMap[dstDir] = append(entries, dstBase)
-	} else {
-		ufs.dirMap[dstDir] = []string{dstBase}
-	}
+	ufs.dirMap[dstDir] = append(ufs.dirMap[dstDir], dstBase)
 
 	// Persist changes to the source and destination directories
 	if err := ufs.persistFile(srcDir); err != nil {
@@ -134,11 +111,6 @@ func (ufs *uFileSystem) Mv(src, dst string) error {
 		return fmt.Errorf("failed to persist destination directory data: %v", err)
 	}
 
-	// Persist changes in the database
-	if err := ufs.persistor.UpdatePaths(srcPath, dstPath); err != nil {
-		return fmt.Errorf("failed to update paths in database: %v", err)
-	}
-
 	// Remove any previous entry in the destination path, as it should not be listed twice
 	delete(ufs.dirMap, dstPath)
 	return nil
@@ -146,10 +118,8 @@ func (ufs *uFileSystem) Mv(src, dst string) error {
 
 // Ls lists the contents of the specified directory or the current working directory if path is empty.
 func (ufs *uFileSystem) Ls(path string) ([]string, error) {
-	if path == "" {
-		path = "."
-	}
 	dirPath := ufs.resolvePath(path)
+
 	ufs.fsMutex.RLock()
 	defer ufs.fsMutex.RUnlock()
 
@@ -175,23 +145,11 @@ func (ufs *uFileSystem) Mkdir(path string, perm os.FileMode) error {
 
 	// Update the in-memory directory map
 	dirPath := filepath.Dir(absPath)
-	if dirPath == "." {
-		dirPath = ufs.cwd
-	}
-
-	entries, exists := ufs.dirMap[dirPath]
-	if !exists {
-		entries = []string{}
-	}
-	ufs.dirMap[dirPath] = append(entries, filepath.Base(absPath))
+	ufs.dirMap[dirPath] = append(ufs.dirMap[dirPath], filepath.Base(absPath))
 	ufs.dirMap[absPath] = []string{} // Initialize the new directory
 
 	// Persist the changes for the parent directory
-	if err := ufs.persistFile(dirPath); err != nil {
-		return fmt.Errorf("failed to persist parent directory data: %v", err)
-	}
-
-	return nil
+	return ufs.persistFile(dirPath)
 }
 
 // Create creates a new file and updates the in-memory directory map.
@@ -207,21 +165,10 @@ func (ufs *uFileSystem) Create(name string) (afero.File, error) {
 
 	// Update the in-memory directory map
 	dirPath := filepath.Dir(absPath)
-	if dirPath == "." {
-		dirPath = ufs.cwd
-	}
-
-	entries, exists := ufs.dirMap[dirPath]
-	if !exists {
-		entries = []string{}
-	}
-	ufs.dirMap[dirPath] = append(entries, filepath.Base(absPath))
+	ufs.dirMap[dirPath] = append(ufs.dirMap[dirPath], filepath.Base(absPath))
 
 	// Persist the changes for the parent directory
-	if err := ufs.persistFile(dirPath); err != nil {
-		return nil, fmt.Errorf("failed to persist directory data: %v", err)
-	}
-	return file, nil
+	return file, ufs.persistFile(dirPath)
 }
 
 // Remove removes a file or directory.
@@ -255,68 +202,80 @@ func (ufs *uFileSystem) Remove(name string) error {
 				if entry.IsDir() {
 					stack = append(stack, entryPath)
 				}
-				err = ufs.fs.Remove(entryPath)
-				if err != nil {
+				if err := ufs.fs.Remove(entryPath); err != nil {
+					return err
+				}
+
+				// Remove from in-memory directory map
+				dirPath := filepath.Dir(entryPath)
+				if entries := ufs.dirMap[dirPath]; entries != nil {
+					newEntries := []string{}
+					for _, e := range entries {
+						if e != filepath.Base(entryPath) {
+							newEntries = append(newEntries, e)
+						}
+					}
+					if len(newEntries) > 0 {
+						ufs.dirMap[dirPath] = newEntries
+					} else {
+						delete(ufs.dirMap, dirPath)
+					}
+				}
+
+				// Remove the persisted data
+				if err := ufs.persistor.RemovePersistedFile(entryPath); err != nil {
 					return err
 				}
 			}
 
 			// Remove the now-empty directory itself
-			err = ufs.fs.Remove(dir)
-			if err != nil {
+			if err := ufs.fs.Remove(dir); err != nil {
 				return err
+			}
+
+			// Remove the directory from the in-memory map
+			dirPath := filepath.Dir(dir)
+			if entries := ufs.dirMap[dirPath]; entries != nil {
+				newEntries := []string{}
+				for _, e := range entries {
+					if e != filepath.Base(dir) {
+						newEntries = append(newEntries, e)
+					}
+				}
+				if len(newEntries) > 0 {
+					ufs.dirMap[dirPath] = newEntries
+				} else {
+					delete(ufs.dirMap, dirPath)
+				}
 			}
 		}
 	} else {
 		// Remove a file
-		err = ufs.fs.Remove(absPath)
-		if err != nil {
+		if err := ufs.fs.Remove(absPath); err != nil {
 			return err
 		}
-	}
 
-	// Update the in-memory directory map
-	dirPath := filepath.Dir(absPath)
-	if entries, ok := ufs.dirMap[dirPath]; ok {
+		// Update the in-memory directory map
+		dirPath := filepath.Dir(absPath)
+		entries := ufs.dirMap[dirPath]
 		newEntries := []string{}
 		for _, entry := range entries {
 			if entry != filepath.Base(absPath) {
 				newEntries = append(newEntries, entry)
 			}
 		}
-		if len(newEntries) > 0 {
-			ufs.dirMap[dirPath] = newEntries
-		} else {
-			delete(ufs.dirMap, dirPath)
+
+		ufs.dirMap[dirPath] = newEntries
+
+		// Remove the file from the in-memory map
+		delete(ufs.dirMap, absPath)
+
+		// Remove the persisted data
+		if err := ufs.persistor.RemovePersistedFile(name); err != nil {
+			return err
 		}
 	}
-	delete(ufs.dirMap, absPath)
 
-	// Remove the persisted data
-	if err := ufs.persistor.RemovePersistedFile(name); err != nil {
-		return fmt.Errorf("failed to remove persisted data: %v", err)
-	}
-	return nil
-}
-
-// ReadFile reads the contents of a file.
-func (ufs *uFileSystem) ReadFile(name string) ([]byte, error) {
-	absPath := ufs.resolvePath(name)
-	return afero.ReadFile(ufs.fs, absPath)
-}
-
-// WriteFile writes data to a file.
-func (ufs *uFileSystem) WriteFile(name string, data []byte, perm os.FileMode) error {
-	absPath := ufs.resolvePath(name)
-	err := afero.WriteFile(ufs.fs, absPath, data, perm)
-	if err != nil {
-		return err
-	}
-
-	// Persist the changes for the parent directory
-	if err := ufs.persistFile(filepath.Dir(absPath)); err != nil {
-		return fmt.Errorf("failed to persist directory data: %v", err)
-	}
 	return nil
 }
 
@@ -330,86 +289,10 @@ func (ufs *uFileSystem) resolvePath(path string) string {
 
 // IsDir checks if the given path is a directory.
 func (ufs *uFileSystem) IsDir(path string) (bool, error) {
-	ufs.fsMutex.RLock()
-	defer ufs.fsMutex.RUnlock()
-
 	absPath := ufs.resolvePath(path)
 	info, err := ufs.fs.Stat(absPath)
 	if err != nil {
 		return false, err
 	}
 	return info.IsDir(), nil
-}
-
-func testUfs() {
-	db, _ := gorm.Open(sqlite.Open("ufs.db"), &gorm.Config{})
-
-	fs := NewUFileSystem(db)
-
-	// Test MkdirAll
-	err := fs.Mkdir("/testdir/parent/subdir", 0755)
-	if err != nil {
-		fmt.Println("Error creating directory:", err)
-		return
-	}
-
-	// Test Create
-	_, err = fs.Create("/testdir/parent/subdir/file1.txt")
-	if err != nil {
-		fmt.Println("Error creating file:", err)
-		return
-	}
-
-	// Test WriteFile
-	err = fs.WriteFile("/testdir/parent/subdir/file1.txt", []byte("Hello, World!"), 0644)
-	if err != nil {
-		fmt.Println("Error writing file:", err)
-		return
-	}
-
-	// Test ReadFile
-	data, err := fs.ReadFile("/testdir/parent/subdir/file1.txt")
-	if err != nil {
-		fmt.Println("Error reading file:", err)
-		return
-	}
-	fmt.Println("File contents:", string(data))
-
-	// Test Ls
-	files, err := fs.Ls("/testdir/parent/subdir")
-	if err != nil {
-		fmt.Println("Error listing directory:", err)
-		return
-	}
-	fmt.Println("Contents of /testdir/parent/subdir:", files)
-
-	// Test Remove
-	err = fs.Remove("/testdir/parent/subdir/file1.txt")
-	if err != nil {
-		fmt.Println("Error removing file:", err)
-		return
-	}
-
-	// Verify file removal
-	files, err = fs.Ls("/testdir/parent/subdir")
-	if err != nil {
-		fmt.Println("Error listing directory:", err)
-		return
-	}
-	fmt.Println("Contents of /testdir/parent/subdir after removal:", files)
-
-	// Test Remove directory
-	err = fs.Remove("/testdir/parent/subdir")
-	if err != nil {
-		fmt.Println("Error removing directory:", err)
-		return
-	}
-
-	// Verify directory removal
-	files, err = fs.Ls("/testdir/parent")
-	if err != nil {
-		fmt.Println("Error listing directory:", err)
-		return
-	}
-	fmt.Println("Contents of /testdir/parent after removing subdir:", files)
 }
